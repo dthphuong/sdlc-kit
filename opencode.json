@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  
+  "default_agent": "orchestrator",
+  
+  "agent": {
+    "orchestrator": {
+      "description": "Team orchestrator that coordinates SDLC agents and manages development workflow",
+      "mode": "primary",
+      "model": "zai-coding-plan/glm-5",
+      "temperature": 0.3,
+      "color": "#8E44AD"
+    }
+  },
+  
+  "permission": {
+    "edit": "ask",
+    "bash": "ask"
+  },
+  
+  "instructions": [
+    "./AGENTS.md",
+    "./.opencode/rules/*.md"
+  ]
+}
