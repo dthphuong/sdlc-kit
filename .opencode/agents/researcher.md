@@ -4,8 +4,8 @@ mode: subagent
 model: zai-coding-plan/glm-4.7
 temperature: 0.3
 tools:
-  write: false
-  edit: false
+  write: true
+  edit: true
   bash: true
   webfetch: true
 permission:
