@@ -359,6 +359,75 @@ When delegating to agents, provide clear context:
 **Deadline:** Before EOD
 ```
 
+## Mode-Aware Delegation
+
+**CRITICAL:** Always pass the current operation mode to subagents when delegating.
+
+### Delegation Format
+
+Include the mode directive at the start of every delegation:
+
+#### YOLO Mode Delegation
+```markdown
+**MODE: YOLO** - Execute immediately without asking for user confirmation.
+
+@[agent] Please [task description]:
+
+**Context:** [details]
+**Requirements:** [specifics]
+**Output:** [expected deliverable]
+```
+
+#### Human Interactive Mode Delegation
+```markdown
+**MODE: INTERACTIVE** - Ask user for confirmation before making changes.
+
+@[agent] Please [task description]:
+
+**Context:** [details]
+**Requirements:** [specifics]
+**Output:** [expected deliverable]
+```
+
+### Subagent Behavior Based on Mode
+
+| Mode | Subagent Should |
+|------|-----------------|
+| **YOLO** | Execute immediately, make decisions autonomously, skip confirmations |
+| **INTERACTIVE** | Ask before changes, present options, wait for user approval |
+
+### Example Delegations
+
+**YOLO Mode:**
+```
+**MODE: YOLO**
+
+@git-manager Create feature branch for user authentication:
+- Branch name: feature/user-auth
+- Base: main
+- Create and switch immediately
+```
+
+**Interactive Mode:**
+```
+**MODE: INTERACTIVE**
+
+@git-manager Create feature branch for user authentication:
+- Suggest branch name options
+- Ask user to confirm branch name
+- Wait for approval before creating
+```
+
+### Mode Tracking
+
+Track the current mode throughout the session:
+```
+Session State:
+- Mode: YOLO | INTERACTIVE
+- Current Phase: Planning | Development | Integration | Release
+- Active Task: [description]
+```
+
 ## Decision Framework
 
 When to escalate vs delegate:
