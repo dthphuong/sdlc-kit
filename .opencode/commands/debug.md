@@ -6,6 +6,13 @@ model: zai-coding-plan/glm-5
 
 Investigate and diagnose the following issue: $ARGUMENTS
 
+## File Output
+
+Save the debug report as a markdown file:
+- **Location:** `./report/` folder
+- **Filename format:** `DEBUG_YYYYmmdd_HHMMSS.md` (e.g., `DEBUG_20260225_143022.md`)
+- Create the `./report` directory if it doesn't exist
+
 ## Debug Process
 
 ### Phase 1: Understand the Problem

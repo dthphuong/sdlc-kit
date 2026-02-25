@@ -4,7 +4,22 @@ agent: tester
 model: zai-coding-plan/glm-5
 ---
 
+## Configuration
+
+<!-- USER: Edit these values as needed for your project -->
+```yaml
+test_coverage_target: 80        # Target test coverage percentage (e.g., 80 means 80%)
+retry_attempts: 3               # Number of retry attempts when fix fails (e.g., 3 means try 3 times)
+```
+
 Create comprehensive tests for: $ARGUMENTS
+
+## File Output
+
+Save test reports as markdown files:
+- **Location:** `./report/` folder
+- **Filename format:** `TEST_REPORT_YYYYmmdd_HHMMSS.md` (e.g., `TEST_REPORT_20260225_143022.md`)
+- Create the `./report` directory if it doesn't exist
 
 ## Test Requirements
 
@@ -40,6 +55,14 @@ Use AAA pattern:
 **Tests Passed:** [count]
 **Tests Failed:** [count]
 **Bugs Found:** [count]
+
+## Test Phase Tracking
+
+| Phase | Failed | Fixed | Status |
+|-------|--------|-------|--------|
+| Initial Run | [count] | - | ❌ Fail |
+| After Fix 1 | [count] | [count] | [Pass/Fail] |
+| **Final** | **[count]** | **[total fixed]** | **[Pending]** |
 
 ## Bugs
 
@@ -92,6 +115,13 @@ function processUser(user: User | null): Result | null {
 **Tests Run:** [count]
 **Tests Passed:** [count] (100%)
 **Coverage:** [percentage]%
+
+## Test Phase Tracking
+
+| Phase | Failed | Fixed | Status |
+|-------|--------|-------|--------|
+| Initial Run | 0 | - | ✅ Pass |
+| **Final** | **0** | **0** | **✅ Pass** |
 
 ## Tests Created
 | Test File | Tests | Coverage |

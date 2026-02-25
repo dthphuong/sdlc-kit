@@ -127,3 +127,11 @@ Evaluate options based on:
 ```
 
 Be thorough, objective, and cite all sources.
+
+## File Output
+
+Save the research report as a markdown file:
+- **Location:** `./research/` folder
+- **Filename format:** `YYYYmmdd_<research_title>.md` (e.g., `20260225_redis_caching.md`)
+- Create the `./research` directory if it doesn't exist
+- Use underscores for spaces in the title

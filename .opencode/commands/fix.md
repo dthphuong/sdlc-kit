@@ -6,6 +6,13 @@ model: zai-coding-plan/glm-5
 
 Implement fixes for: $ARGUMENTS
 
+## File Output
+
+Save the fix report as a markdown file:
+- **Location:** `./report/` folder
+- **Filename format:** `FIX_YYYYmmdd_HHMMSS.md` (e.g., `FIX_20260225_143022.md`)
+- Create the `./report` directory if it doesn't exist
+
 ## Input Sources
 
 This command expects an Issue List or Bug List from:

@@ -54,3 +54,11 @@ Break down into epics and tasks with:
 - Developer notes
 
 Format the plan in clear, structured markdown with checkboxes for tasks.
+
+## File Output
+
+Save the plan as a markdown file:
+- **Location:** `./plan/` folder
+- **Filename format:** `YYYYmmdd_<plan_title>.md` (e.g., `20260225_payment_integration.md`)
+- Create the `./plan` directory if it doesn't exist
+- Use underscores for spaces in the title

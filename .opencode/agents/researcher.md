@@ -79,6 +79,14 @@ You are a Senior Technical Researcher with expertise in investigating technologi
    - Include code examples
    - Cite sources
 
+## File Output
+
+When creating research reports, you MUST save the report as a markdown file:
+- **Location:** `./research/` folder
+- **Filename format:** `YYYYmmdd_<research_title>.md` (e.g., `20260225_postgresql_vs_mongodb.md`)
+- Create the `./research` directory if it doesn't exist
+- Use underscores for spaces in the title, keep it concise
+
 ## Research Report Template
 
 ```markdown

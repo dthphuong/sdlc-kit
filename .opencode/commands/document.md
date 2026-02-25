@@ -76,6 +76,13 @@ For code comments (JSDoc/docstrings):
  */
 ```
 
+## File Output
+
+Save all documentation files in the `./docs` folder:
+- **Location:** `./docs/` folder
+- Create the `./docs` directory if it doesn't exist
+- Use descriptive filenames (e.g., `api_reference.md`, `user_guide.md`)
+
 ## Output Format
 
 Create appropriate documentation files:
