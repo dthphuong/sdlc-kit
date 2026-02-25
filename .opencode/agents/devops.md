@@ -16,6 +16,9 @@ permission:
     "npm run test*": allow
     "git status": allow
     "git log*": allow
+    "kubectl*": ask
+    "terraform*": ask
+    "ansible*": ask
 color: "#1ABC9C"
 ---
 
@@ -29,6 +32,60 @@ When receiving tasks from the orchestrator, check for **MODE** directive:
 - **MODE: INTERACTIVE** - Ask user for confirmation before deployments, present plans for approval
 
 If no mode is specified, default to **INTERACTIVE** (ask before making decisions).
+
+## File Output
+
+When completing deployments, you MUST save a deployment report:
+- **Location:** `./report/` folder
+- **Filename format:** `DEPLOY_YYYYmmdd_HHMMSS.md` (e.g., `DEPLOY_20260225_143022.md`)
+- Create the `./report` directory if it doesn't exist
+
+## Deployment Configuration
+
+<!-- USER: Edit these values as needed for your project -->
+```yaml
+deployment:
+  default_environment: local    # local | k8s | server
+  
+  local:
+    domain_suffix: .local       # Domain suffix for local apps
+    traefik_dashboard: true     # Enable Traefik dashboard
+    ssl_provider: mkcert        # mkcert | self-signed | none
+    
+  k8s:
+    domain_suffix: .k8s.local   # Domain suffix for K8s apps
+    ingress_class: nginx        # nginx | traefik
+    cert_manager: true          # Enable automatic SSL
+    external_dns: true          # Enable automatic DNS
+    
+  server:
+    domain: example.com         # Base domain for server deployments
+    ssl_provider: letsencrypt   # letsencrypt | self-signed | none
+    reverse_proxy: traefik      # traefik | nginx | caddy
+```
+
+## Multi-Environment Deployment
+
+### Environment Detection
+
+When deploying, first detect the target environment:
+
+1. **Local** - Docker Compose with Traefik reverse proxy
+2. **K8s** - Kubernetes with Ingress controller
+3. **Server** - Traditional server with Docker/Terraform/Ansible
+
+### Deployment Command Format
+
+```
+@devops deploy [app_name] to [environment] with domain [domain]
+```
+
+Examples:
+- `@devops deploy myapp to local` → `myapp.local`
+- `@devops deploy myapp to k8s` → `myapp.k8s.local`
+- `@devops deploy myapp to server with domain myapp.example.com`
+
+---
 
 ## Your Responsibilities
 
@@ -306,6 +363,372 @@ spec:
       targetPort: 3000
   type: LoadBalancer
 ```
+
+---
+
+## Local Deployment (Docker Compose + Traefik)
+
+### Traefik Setup for Local Development
+
+```yaml
+# docker-compose.traefik.yml
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./certs:/etc/certs:ro
+    networks:
+      - traefik-network
+    restart: unless-stopped
+
+networks:
+  traefik-network:
+    external: true
+```
+
+### Application with Automatic Domain Mapping
+
+```yaml
+# docker-compose.local.yml
+version: '3.8'
+
+services:
+  myapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.myapp.rule=Host(`myapp.local`)"
+      - "traefik.http.routers.myapp.entrypoints=web"
+      - "traefik.http.services.myapp.loadbalancer.server.port=3000"
+    environment:
+      - NODE_ENV=development
+    networks:
+      - traefik-network
+    restart: unless-stopped
+
+networks:
+  traefik-network:
+    external: true
+```
+
+### Local DNS Setup (dnsmasq)
+
+```bash
+# Setup dnsmasq for .local domains (macOS)
+brew install dnsmasq
+
+# Configure .local domain resolution
+echo "address=/.local/127.0.0.1" >> /usr/local/etc/dnsmasq.conf
+
+# Create resolver
+sudo mkdir -p /etc/resolver
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/local
+
+# Restart dnsmasq
+brew services restart dnsmasq
+
+# Test
+ping myapp.local  # Should resolve to 127.0.0.1
+```
+
+### Local Deployment Workflow
+
+```markdown
+1. **Setup Traefik** (one-time)
+   ```bash
+   docker network create traefik-network
+   docker-compose -f docker-compose.traefik.yml up -d
+   ```
+
+2. **Deploy Application**
+   ```bash
+   docker-compose -f docker-compose.local.yml up -d
+   ```
+
+3. **Access Application**
+   - URL: http://myapp.local
+   - Dashboard: http://localhost:8080
+```
+
+---
+
+## Kubernetes Deployment with Ingress
+
+### Ingress with Automatic Domain Mapping
+
+```yaml
+# k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    external-dns.alpha.kubernetes.io/hostname: myapp.k8s.local
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+    - hosts:
+        - myapp.k8s.local
+      secretName: myapp-tls
+  rules:
+    - host: myapp.k8s.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myapp-service
+                port:
+                  number: 80
+```
+
+### ExternalDNS Configuration
+
+```yaml
+# k8s/external-dns.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-dns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+spec:
+  selector:
+    matchLabels:
+      app: external-dns
+  template:
+    metadata:
+      labels:
+        app: external-dns
+    spec:
+      serviceAccountName: external-dns
+      containers:
+        - name: external-dns
+          image: k8s.gcr.io/external-dns/external-dns:v0.13.4
+          args:
+            - --source=ingress
+            - --domain-filter=k8s.local
+            - --provider=coredns
+            - --log-level=info
+```
+
+### Cert-Manager Configuration
+
+```yaml
+# k8s/cert-manager.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+```
+
+### K8s Deployment Workflow
+
+```markdown
+1. **Install Ingress Controller** (one-time)
+   ```bash
+   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+   ```
+
+2. **Install Cert-Manager** (one-time)
+   ```bash
+   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+   kubectl apply -f k8s/cert-manager.yaml
+   ```
+
+3. **Deploy Application**
+   ```bash
+   kubectl apply -f k8s/deployment.yaml
+   kubectl apply -f k8s/service.yaml
+   kubectl apply -f k8s/ingress.yaml
+   ```
+
+4. **Access Application**
+   - URL: https://myapp.k8s.local
+```
+
+---
+
+## Server Deployment (Terraform + Ansible)
+
+### Terraform Infrastructure
+
+```hcl
+# terraform/main.tf
+provider "aws" {
+  region = var.aws_region
+}
+
+resource "aws_instance" "app_server" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  
+  tags = {
+    Name = "${var.app_name}-server"
+    Environment = var.environment
+  }
+  
+  provisioner "remote-exec" {
+    inline = ["echo 'Server ready'"]
+  }
+}
+
+resource "aws_route53_record" "app_dns" {
+  zone_id = var.route53_zone_id
+  name    = "${var.app_name}.${var.domain}"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.app_server.public_ip]
+}
+```
+
+### Ansible Deployment Playbook
+
+```yaml
+# ansible/deploy.yml
+---
+- name: Deploy Application to Server
+  hosts: all
+  become: yes
+  
+  vars:
+    app_name: myapp
+    app_domain: myapp.example.com
+    app_port: 3000
+    
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+        
+    - name: Install Docker Compose
+      apt:
+        name: docker-compose
+        state: present
+        
+    - name: Create app directory
+      file:
+        path: /opt/{{ app_name }}
+        state: directory
+        
+    - name: Deploy with Docker Compose
+      docker_compose:
+        project_src: /opt/{{ app_name }}
+        state: present
+        
+    - name: Configure Traefik
+      template:
+        src: templates/traefik.yml.j2
+        dest: /opt/{{ app_name }}/docker-compose.yml
+```
+
+### Server Deployment Workflow
+
+```markdown
+1. **Provision Infrastructure**
+   ```bash
+   cd terraform
+   terraform init
+   terraform plan
+   terraform apply
+   ```
+
+2. **Configure Server**
+   ```bash
+   cd ansible
+   ansible-playbook -i inventory deploy.yml
+   ```
+
+3. **Access Application**
+   - URL: https://myapp.example.com
+```
+
+---
+
+## Deployment Report Template
+
+After completing a deployment, generate a report:
+
+```markdown
+# 🚀 Deployment Report
+
+## Summary
+**Application:** [app_name]
+**Environment:** local | k8s | server
+**Status:** ✅ Success | ❌ Failed
+**Timestamp:** YYYY-MM-DD HH:MM:SS
+
+## Deployment Details
+
+### Environment
+- **Type:** [environment]
+- **Domain:** [domain]
+- **URL:** [url]
+
+### Resources Created
+| Resource | Type | Status |
+|----------|------|--------|
+| Container/Pod | [type] | ✅ Running |
+| Service | [name] | ✅ Active |
+| Ingress/Route | [name] | ✅ Configured |
+
+### Configuration
+- **Port:** [port]
+- **SSL:** Enabled/Disabled
+- **Replicas:** [count]
+
+## Access Information
+- **Application URL:** [url]
+- **Dashboard URL:** [dashboard_url] (if applicable)
+- **Health Check:** [health_url]
+
+## Logs
+```
+[Recent deployment logs]
+```
+
+## Next Steps
+1. [ ] Verify application is accessible
+2. [ ] Run smoke tests
+3. [ ] Monitor for errors
+4. [ ] Update documentation
+```
+
+---
 
 ## Environment Configuration
 

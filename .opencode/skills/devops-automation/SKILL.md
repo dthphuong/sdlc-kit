@@ -751,3 +751,217 @@ groups:
 8. **Test in production-like environments**
 9. **Use infrastructure as code**
 10. **Continuous improvement**
+
+---
+
+## Multi-Environment Deployment with Automatic Domain Mapping
+
+### Overview
+
+Deploy applications to multiple environments (Local, Kubernetes, Server) with automatic domain mapping for seamless development workflow.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SDLC Deployment Pipeline                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                      │
+│  │  Local  │    │   K8s   │    │ Server  │                      │
+│  │  .local │    │.k8s.local│   │.domain │                      │
+│  └────┬────┘    └────┬────┘    └────┬────┘                      │
+│       │              │              │                            │
+│       ▼              ▼              ▼                            │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                      │
+│  │ Traefik │    │ Ingress │    │ Nginx/  │                      │
+│  │         │    │+ExtDNS  │    │ Traefik │                      │
+│  └─────────┘    └─────────┘    └─────────┘                      │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Local Environment (Docker Compose + Traefik)
+
+**Setup:**
+
+1. **Traefik Reverse Proxy** (`docker-compose.traefik.yml`)
+```yaml
+version: '3.8'
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - traefik-network
+    restart: unless-stopped
+
+networks:
+  traefik-network:
+    name: traefik-network
+```
+
+2. **Application with Domain** (`docker-compose.local.yml`)
+```yaml
+version: '3.8'
+services:
+  myapp:
+    build: .
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.myapp.rule=Host(`myapp.local`)"
+      - "traefik.http.routers.myapp.entrypoints=web"
+      - "traefik.http.services.myapp.loadbalancer.server.port=3000"
+    networks:
+      - traefik-network
+
+networks:
+  traefik-network:
+    external: true
+```
+
+3. **Local DNS Setup** (dnsmasq)
+```bash
+# macOS
+brew install dnsmasq
+echo "address=/.local/127.0.0.1" >> /usr/local/etc/dnsmasq.conf
+sudo mkdir -p /etc/resolver
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/local
+brew services restart dnsmasq
+
+# Linux
+sudo apt install dnsmasq
+echo "address=/.local/127.0.0.1" >> /etc/dnsmasq.conf
+sudo systemctl restart dnsmasq
+```
+
+**Deploy:**
+```bash
+# One-time setup
+docker network create traefik-network
+docker-compose -f docker-compose.traefik.yml up -d
+
+# Deploy app
+docker-compose -f docker-compose.local.yml up -d
+
+# Access: http://myapp.local
+```
+
+### Kubernetes Environment (Ingress + ExternalDNS)
+
+**Components:**
+1. **Ingress Controller** (Nginx or Traefik)
+2. **ExternalDNS** (automatic DNS management)
+3. **Cert-Manager** (automatic SSL)
+
+**Ingress with Domain Mapping:**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    external-dns.alpha.kubernetes.io/hostname: myapp.k8s.local
+spec:
+  tls:
+    - hosts:
+        - myapp.k8s.local
+      secretName: myapp-tls
+  rules:
+    - host: myapp.k8s.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myapp-service
+                port:
+                  number: 80
+```
+
+**Deploy:**
+```bash
+kubectl apply -f k8s/
+# Access: https://myapp.k8s.local
+```
+
+### Server Environment (Terraform + Ansible)
+
+**Terraform Infrastructure:**
+```hcl
+# Provision server
+resource "aws_instance" "app" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  tags = { Name = "${var.app_name}-server" }
+}
+
+# Configure DNS
+resource "aws_route53_record" "app" {
+  zone_id = var.route53_zone_id
+  name    = "${var.app_name}.${var.domain}"
+  type    = "A"
+  records = [aws_instance.app.public_ip]
+}
+```
+
+**Ansible Deployment:**
+```yaml
+- name: Deploy Application
+  hosts: all
+  tasks:
+    - name: Install Docker
+      apt: name=docker.io state=present
+      
+    - name: Deploy with Traefik
+      docker_compose:
+        project_src: /opt/{{ app_name }}
+        state: present
+```
+
+**Deploy:**
+```bash
+terraform apply
+ansible-playbook deploy.yml
+# Access: https://myapp.example.com
+```
+
+### Domain Mapping Summary
+
+| Environment | Domain Pattern | Tools | Access |
+|------------|----------------|-------|--------|
+| Local | `{app}.local` | Traefik + dnsmasq | `http://myapp.local` |
+| K8s | `{app}.k8s.local` | Ingress + ExternalDNS | `https://myapp.k8s.local` |
+| Server | `{app}.{domain}` | Terraform + Route53 | `https://myapp.example.com` |
+
+### Quick Reference Commands
+
+```bash
+# Local deployment
+docker-compose -f deploy/docker-compose.local.yml up -d
+
+# Kubernetes deployment
+kubectl apply -f k8s/
+
+# Server deployment
+terraform apply && ansible-playbook deploy.yml
+
+# Check status
+curl http://myapp.local/health
+kubectl get pods -n myapp
+ssh user@server 'docker ps'
+```
+
