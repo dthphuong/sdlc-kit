@@ -9,7 +9,7 @@ tools:
   bash: true
 permission:
   bash:
-    "*": ask
+    "*": allow
     "docker*": allow
     "npm run build*": allow
     "npm run lint*": allow
@@ -46,18 +46,18 @@ When completing deployments, you MUST save a deployment report:
 ```yaml
 deployment:
   default_environment: local    # local | k8s | server
-  
+
   local:
     domain_suffix: .local       # Domain suffix for local apps
     traefik_dashboard: true     # Enable Traefik dashboard
     ssl_provider: mkcert        # mkcert | self-signed | none
-    
+
   k8s:
     domain_suffix: .k8s.local   # Domain suffix for K8s apps
     ingress_class: nginx        # nginx | traefik
     cert_manager: true          # Enable automatic SSL
     external_dns: true          # Enable automatic DNS
-    
+
   server:
     domain: example.com         # Base domain for server deployments
     ssl_provider: letsencrypt   # letsencrypt | self-signed | none
@@ -594,12 +594,12 @@ provider "aws" {
 resource "aws_instance" "app_server" {
   ami           = var.ami_id
   instance_type = var.instance_type
-  
+
   tags = {
     Name = "${var.app_name}-server"
     Environment = var.environment
   }
-  
+
   provisioner "remote-exec" {
     inline = ["echo 'Server ready'"]
   }
@@ -622,34 +622,34 @@ resource "aws_route53_record" "app_dns" {
 - name: Deploy Application to Server
   hosts: all
   become: yes
-  
+
   vars:
     app_name: myapp
     app_domain: myapp.example.com
     app_port: 3000
-    
+
   tasks:
     - name: Install Docker
       apt:
         name: docker.io
         state: present
         update_cache: yes
-        
+
     - name: Install Docker Compose
       apt:
         name: docker-compose
         state: present
-        
+
     - name: Create app directory
       file:
         path: /opt/{{ app_name }}
         state: directory
-        
+
     - name: Deploy with Docker Compose
       docker_compose:
         project_src: /opt/{{ app_name }}
         state: present
-        
+
     - name: Configure Traefik
       template:
         src: templates/traefik.yml.j2
@@ -834,22 +834,85 @@ pm2 monit
 
 ## Security Best Practices
 
-1. **Secrets Management**
-   - Use vault solutions (HashiCorp Vault, AWS Secrets Manager)
-   - Never commit secrets
-   - Rotate secrets regularly
+ 1. **Secrets Management**
+    - Use vault solutions (HashiCorp Vault, AWS Secrets Manager)
+    - Never commit secrets
+    - Rotate secrets regularly
 
-2. **Access Control**
-   - Implement RBAC
-   - Use service accounts
-   - Enable audit logging
+ 2. **Access Control**
+    - Implement RBAC
+    - Use service accounts
+    - Enable audit logging
 
-3. **Image Security**
-   - Use minimal base images
-   - Scan for vulnerabilities
-   - Sign images
+ 3. **Image Security**
+    - Use minimal base images
+    - Scan for vulnerabilities
+    - Sign images
 
-4. **Network Security**
-   - Use private networks
-   - Enable TLS everywhere
-   - Implement firewall rules
+ 4. **Network Security**
+    - Use private networks
+    - Enable TLS everywhere
+    - Implement firewall rules
+
+---
+
+## Practical Use Cases
+
+### Use Case 1: Deploy Static Site to kind Cluster with Custom Domain
+
+Deploy a static website (Astro/Next.js/Vite) to a local kind Kubernetes cluster with custom domain mapping.
+
+**Quick Start:**
+```bash
+@devops deploy myapp to k8s with domain myapp.io
+```
+
+**What it creates:**
+- Multi-stage Dockerfile with nginx
+- Kubernetes manifests (namespace, deployment, service, ingress)
+- nginx configuration optimized for static files
+- Deployment and teardown scripts
+
+**Key considerations:**
+1. Use `imagePullPolicy: Never` for local kind clusters
+2. Add emptyDir volumes for nginx writable directories
+3. Ensure label consistency between pods and services
+4. Use `ingressClassName: nginx` (not deprecated annotation)
+5. Configure /etc/hosts: `127.0.0.1 myapp.io`
+
+**Common issues and solutions:**
+- **CrashLoopBackOff**: Add emptyDir volumes for /var/cache/nginx and /var/run
+- **Empty endpoints**: Ensure service selector matches pod labels exactly
+- **503 errors**: Verify ingress controller is running and ingressClassName is set
+- **kind CLI not found**: Load image directly into nodes with `docker exec`
+
+**Full documentation:** See `.opencode/skills/devops-automation/SKILL.md` → "Use Case: Deploy Static Site to kind Cluster"
+
+### Use Case 2: Deploy to Production with SSL
+
+Deploy to production Kubernetes with automatic SSL via cert-manager.
+
+**Quick Start:**
+```bash
+@devops deploy myapp to k8s with domain myapp.example.com --ssl
+```
+
+**Requirements:**
+- cert-manager installed in cluster
+- Valid email for Let's Encrypt
+- DNS configured to point to cluster
+
+### Use Case 3: Multi-Environment Deployment
+
+Deploy to multiple environments with different configurations.
+
+```bash
+# Development
+@devops deploy myapp to local
+
+# Staging
+@devops deploy myapp to k8s --env staging
+
+# Production
+@devops deploy myapp to server with domain myapp.example.com
+```

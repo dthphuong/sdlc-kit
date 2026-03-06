@@ -222,3 +222,187 @@ cd ansible && ansible-playbook rollback.yml
 3. Monitor for errors
 4. Update team documentation
 ```
+
+---
+
+## Practical Examples
+
+### Example 1: Deploy Static Site to kind Cluster
+
+**Scenario:** Deploy an Astro static site to a local kind cluster with custom domain `unicard.io`.
+
+**Command:**
+```
+/deploy unicard-landing to k8s with domain unicard.io
+```
+
+**Files Created:**
+```
+unicard-landing/
+├── Dockerfile              # Multi-stage build (Node.js → nginx)
+└── nginx.conf              # Optimized nginx config
+
+k8s/
+├── namespace.yaml          # Kubernetes namespace
+├── deployment.yaml         # 2-replica deployment with health checks
+├── service.yaml            # ClusterIP service
+├── ingress.yaml            # Ingress for unicard.io
+└── kustomization.yaml      # Kustomize configuration
+
+scripts/
+├── deploy-kind.sh          # Automated deployment script
+└── teardown.sh             # Cleanup script
+```
+
+**Deployment Steps:**
+1. Build Docker image: `docker build -t unicard-landing:latest .`
+2. Load into kind: `kind load docker-image unicard-landing:latest`
+3. Install ingress controller (if not present)
+4. Apply manifests: `kubectl apply -k k8s/`
+5. Configure /etc/hosts: `127.0.0.1 unicard.io`
+
+**Key Configuration:**
+
+Dockerfile (multi-stage):
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine AS production
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+Deployment (with volumes for nginx):
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unicard-landing
+  namespace: unicard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: unicard-landing
+  template:
+    spec:
+      containers:
+        - name: nginx
+          image: unicard-landing:latest
+          imagePullPolicy: Never  # For local kind
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+```
+
+Ingress (with custom domain):
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: unicard-landing
+  namespace: unicard
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: unicard.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: unicard-landing
+                port:
+                  number: 80
+```
+
+**Troubleshooting:**
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| CrashLoopBackOff | Read-only filesystem | Add emptyDir volumes for /var/cache/nginx, /var/run |
+| Empty endpoints | Label mismatch | Ensure service selector matches pod labels |
+| 503 Service Unavailable | Ingress not ready | Verify ingress controller running, check ingressClassName |
+| ImagePullBackOff | Image not in cluster | Use `kind load docker-image` or `imagePullPolicy: Never` |
+| kind CLI not found | CLI not installed | Load image directly: `docker exec -i node ctr import` |
+
+**Verification:**
+```bash
+# Check pods
+kubectl get pods -n unicard
+
+# Check endpoints
+kubectl get endpoints -n unicard
+
+# Test accessibility
+curl -I http://unicard.io
+
+# View logs
+kubectl logs -f -n unicard -l app.kubernetes.io/name=unicard-landing
+```
+
+**Access:** http://unicard.io
+
+### Example 2: Deploy to Production with SSL
+
+**Command:**
+```
+/deploy api to server with domain api.example.com --ssl
+```
+
+**Additional Requirements:**
+- cert-manager installed
+- Let's Encrypt issuer configured
+- DNS pointing to cluster
+
+### Example 3: Quick Local Development
+
+**Command:**
+```
+/deploy myapp to local
+```
+
+**Result:** http://myapp.local
+
+---
+
+## Decision Matrix
+
+| Scenario | Environment | Domain Pattern | SSL | Tools |
+|----------|-------------|----------------|-----|-------|
+| Local dev | local | `{app}.local` | No | Docker Compose + Traefik |
+| kind cluster | k8s | Custom domain | No | kubectl + nginx ingress |
+| Production K8s | k8s | `{app}.domain.com` | Yes | kubectl + cert-manager |
+| Traditional server | server | `{app}.domain.com` | Yes | Terraform + Ansible |
+
+---
+
+## Best Practices Summary
+
+1. **Always use multi-stage Docker builds** for smaller images
+2. **Add health checks** to deployments
+3. **Use resource limits** to prevent resource exhaustion
+4. **Implement proper probes** (liveness + readiness)
+5. **Run as non-root user** for security
+6. **Use emptyDir volumes** for writable directories in read-only containers
+7. **Ensure label consistency** across all resources
+8. **Test locally first** before production deployment
+9. **Have rollback plan** ready
+10. **Monitor after deployment** for issues

@@ -965,3 +965,426 @@ kubectl get pods -n myapp
 ssh user@server 'docker ps'
 ```
 
+---
+
+## Use Case: Deploy Static Site to kind Cluster with Custom Domain
+
+### Overview
+
+Deploy a static Astro website to a local kind (Kubernetes in Docker) cluster with custom domain mapping (e.g., `unicard.io`).
+
+### Prerequisites
+
+- kind cluster running locally
+- kubectl configured
+- Docker installed
+- /etc/hosts configured with custom domain
+
+### Step 1: Project Structure
+
+```
+project/
+├── unicard-landing/           # Application source
+│   ├── src/                   # Source files
+│   ├── dist/                  # Build output
+│   ├── package.json
+│   ├── Dockerfile             # Multi-stage build
+│   └── nginx.conf             # nginx configuration
+│
+├── k8s/                       # Kubernetes manifests
+│   ├── namespace.yaml
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   └── kustomization.yaml
+│
+└── scripts/
+    ├── deploy-kind.sh         # Deployment script
+    └── teardown.sh            # Cleanup script
+```
+
+### Step 2: Create Dockerfile (Multi-stage Build)
+
+```dockerfile
+# Stage 1: Build the static site
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# Stage 2: Serve with nginx
+FROM nginx:alpine AS production
+
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+### Step 3: Create nginx.conf
+
+```nginx
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65;
+
+    # Gzip compression
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    server {
+        listen 80;
+        server_name your-domain.io localhost;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Cache static assets
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # SPA fallback
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}
+```
+
+### Step 4: Create Kubernetes Manifests
+
+#### namespace.yaml
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: myapp
+  labels:
+    name: myapp
+    app.kubernetes.io/name: myapp
+```
+
+#### deployment.yaml
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: myapp
+  labels:
+    app.kubernetes.io/name: myapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: myapp
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myapp
+    spec:
+      containers:
+        - name: nginx
+          image: myapp:latest
+          imagePullPolicy: Never  # For local kind cluster
+          ports:
+            - name: http
+              containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+```
+
+#### service.yaml
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+  namespace: myapp
+  labels:
+    app.kubernetes.io/name: myapp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: myapp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+```
+
+#### ingress.yaml
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp
+  namespace: myapp
+  labels:
+    app.kubernetes.io/name: myapp
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: your-domain.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myapp
+                port:
+                  number: 80
+    - host: localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myapp
+                port:
+                  number: 80
+```
+
+#### kustomization.yaml
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: myapp
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+```
+
+### Step 5: Create Deployment Script
+
+```bash
+#!/bin/bash
+set -e
+
+IMAGE_NAME="myapp"
+IMAGE_TAG="latest"
+FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+
+echo "Building Docker image..."
+cd ./app-source
+docker build -t "${FULL_IMAGE}" .
+
+echo "Loading image into kind cluster..."
+# Option 1: Using kind CLI (recommended)
+kind load docker-image "${FULL_IMAGE}"
+
+# Option 2: If kind CLI not available, load directly into nodes
+# docker save ${FULL_IMAGE} -o /tmp/myapp.tar
+# docker exec -i kind-control-plane ctr -n=k8s.io images import /dev/stdin < /tmp/myapp.tar
+# docker exec -i kind-worker ctr -n=k8s.io images import /dev/stdin < /tmp/myapp.tar
+
+echo "Checking nginx ingress controller..."
+if ! kubectl get deployment -n ingress-nginx ingress-nginx-controller &> /dev/null; then
+    echo "Installing nginx ingress controller..."
+    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+    kubectl wait --namespace ingress-nginx \
+      --for=condition=ready pod \
+      --selector=app.kubernetes.io/component=controller \
+      --timeout=120s
+fi
+
+echo "Applying Kubernetes manifests..."
+kubectl apply -k ../k8s/
+
+echo "Waiting for deployment..."
+kubectl rollout status deployment/myapp -n myapp --timeout=60s
+
+echo "✓ Deployment complete!"
+echo "Access at: http://your-domain.io"
+```
+
+### Step 6: Configure /etc/hosts
+
+```bash
+# Add to /etc/hosts
+echo "127.0.0.1 your-domain.io" | sudo tee -a /etc/hosts
+```
+
+### Step 7: Deploy
+
+```bash
+# Make script executable
+chmod +x scripts/deploy-kind.sh
+
+# Run deployment
+./scripts/deploy-kind.sh
+```
+
+### Step 8: Verify Deployment
+
+```bash
+# Check pods
+kubectl get pods -n myapp
+
+# Check service
+kubectl get svc -n myapp
+
+# Check ingress
+kubectl get ingress -n myapp
+
+# Test accessibility
+curl -I http://your-domain.io
+
+# View logs
+kubectl logs -f -n myapp -l app.kubernetes.io/name=myapp
+```
+
+### Troubleshooting
+
+#### Issue: Pods in CrashLoopBackOff with "Read-only file system"
+
+**Cause:** nginx needs writable directories for cache and PID files.
+
+**Solution:** Add emptyDir volumes to deployment:
+```yaml
+volumeMounts:
+  - name: nginx-cache
+    mountPath: /var/cache/nginx
+  - name: nginx-run
+    mountPath: /var/run
+volumes:
+  - name: nginx-cache
+    emptyDir: {}
+  - name: nginx-run
+    emptyDir: {}
+```
+
+#### Issue: Service endpoints empty (pods not selected)
+
+**Cause:** Service selector doesn't match pod labels exactly.
+
+**Solution:** Ensure labels match exactly:
+- Pod labels: `app.kubernetes.io/name: myapp`
+- Service selector: `app.kubernetes.io/name: myapp`
+
+#### Issue: 503 Service Unavailable
+
+**Cause:** Ingress controller not ready or service not properly linked.
+
+**Solution:**
+1. Verify ingress controller is running
+2. Check service endpoints have pod IPs
+3. Verify ingressClassName is set to `nginx`
+
+#### Issue: kind CLI not found
+
+**Solution:** Load image directly into kind nodes:
+```bash
+docker save myapp:latest -o /tmp/myapp.tar
+docker exec -i kind-control-plane ctr -n=k8s.io images import /dev/stdin < /tmp/myapp.tar
+docker exec -i kind-worker ctr -n=k8s.io images import /dev/stdin < /tmp/myapp.tar
+```
+
+### Teardown
+
+```bash
+#!/bin/bash
+kubectl delete -k k8s/ --ignore-not-found=true
+docker rmi myapp:latest
+```
+
+### Summary
+
+| Step | Action | Command |
+|------|--------|---------|
+| 1 | Build image | `docker build -t myapp:latest .` |
+| 2 | Load to kind | `kind load docker-image myapp:latest` |
+| 3 | Install ingress | `kubectl apply -f ingress-controller.yaml` |
+| 4 | Apply manifests | `kubectl apply -k k8s/` |
+| 5 | Configure DNS | `echo "127.0.0.1 your-domain.io" >> /etc/hosts` |
+| 6 | Verify | `curl http://your-domain.io` |
+
+### Key Learnings
+
+1. **Use `imagePullPolicy: Never`** for local kind clusters to avoid image pull errors
+2. **Add emptyDir volumes** for nginx writable directories
+3. **Ensure label consistency** between pods, services, and deployments
+4. **Use `ingressClassName: nginx`** instead of deprecated annotation
+5. **Test health endpoints** before deploying to ensure probes work
+6. **Avoid kustomize commonLabels** if it causes selector mismatches
+
